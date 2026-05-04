@@ -1,0 +1,6 @@
+# Không push môi trường ảo lên Git
+ai_env/
+
+# Không push các file kết quả tạm thời
+luong_he_thong.html
+so_do_luong.png
