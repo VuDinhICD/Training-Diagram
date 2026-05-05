@@ -4,7 +4,6 @@ import requests
 import webbrowser
 import google.generativeai as genai
 
-# 1. Cấu hình API Key (Nhớ điền Key của bạn vào)
 genai.configure(api_key="")
 
 def read_file_content(file_path):
