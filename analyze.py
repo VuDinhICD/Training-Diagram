@@ -1,16 +1,83 @@
-
 import os
 import re
+import sys
 import subprocess
 import ollama
 
-FILES = [
-    "/Users/dhv06/develop/datn/DATN/routes/web.php",
-    "/Users/dhv06/develop/datn/DATN/app/Http/Controllers/UserController.php"
-]
+# ==============================
+# CONFIG
+# ==============================
+IGNORE_DIRS = {
+    "node_modules",
+    "vendor",
+    ".git",
+    "storage",
+    "dist",
+    "build",
+    "__pycache__",
+    ".next"
+}
+
+ALLOWED_EXTENSIONS = {
+    ".php",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".py",
+    ".java",
+    ".cs",
+    ".go",
+    ".rb"
+}
+
+MAX_FILE_SIZE = 300000
 
 # ==============================
-# READ FILE
+# GET PROJECT PATH
+# ==============================
+if len(sys.argv) < 2:
+    print("❌ Usage:")
+    print("python3 diagram_ai_universal.py /path/to/project")
+    sys.exit(1)
+
+PROJECT_PATH = sys.argv[1]
+
+if not os.path.exists(PROJECT_PATH):
+    print("❌ Project path not found")
+    sys.exit(1)
+
+# ==============================
+# FIND SOURCE FILES
+# ==============================
+def find_source_files(root):
+    files = []
+
+    for current_root, dirs, filenames in os.walk(root):
+
+        # ignore folders
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+
+        for file in filenames:
+            ext = os.path.splitext(file)[1]
+
+            if ext.lower() not in ALLOWED_EXTENSIONS:
+                continue
+
+            path = os.path.join(current_root, file)
+
+            try:
+                if os.path.getsize(path) > MAX_FILE_SIZE:
+                    continue
+            except:
+                continue
+
+            files.append(path)
+
+    return files
+
+# ==============================
+# READ FILES
 # ==============================
 def read_file(path):
     try:
@@ -19,51 +86,98 @@ def read_file(path):
     except:
         return ""
 
-def build_context():
-    return "\n".join(read_file(p) for p in FILES)
+# ==============================
+# BUILD CONTEXT
+# ==============================
+def build_context(files):
+    context = ""
+
+    for path in files:
+        try:
+            rel = os.path.relpath(path, PROJECT_PATH)
+
+            content = read_file(path)
+
+            if not content.strip():
+                continue
+
+            context += f"""
+========================
+FILE: {rel}
+========================
+{content}
+
+"""
+
+        except:
+            pass
+
+    return context[:120000]
 
 # ==============================
 # PROMPT
 # ==============================
-def build_prompt(ctx):
+def build_prompt(context):
     return f"""
-Generate ONE Mermaid flowchart for LOGIN + REGISTER.
+Analyze this project source code.
 
-RULES:
-- First line: flowchart TD
-- Use shapes:
-  (["Start"]), (["End"])
-  ["Process"]
-  {{"Decision"}}
-  [/Input/]
+Generate ONE Mermaid flowchart describing:
+- authentication flow
+- login
+- register
+- logout
+- session
+- middleware
+- redirect
 
-Flow:
-Start → Login/Register → Validate → Success/Error → Home → End
+STRICT:
+- first line: flowchart TD
 
-ONLY business logic. No code.
+USE SHAPES:
+(["Start"])
+(["End"])
+["Process"]
+{{"Decision"}}
+[/Input/]
 
-Code:
-{ctx}
+DO NOT:
+- generate code
+- explain
+- use markdown
+- use subgraph
+
+ONLY Mermaid flowchart.
+
+Project source:
+{context}
 """
 
 # ==============================
-# CALL AI
+# AI
 # ==============================
 def call_ai(prompt):
-    res = ollama.chat(
+    response = ollama.chat(
         model="llama3",
         messages=[
-            {"role": "system", "content": "Only return Mermaid code"},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": "You are a Mermaid diagram generator."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
         ]
     )
-    return res["message"]["content"]
+
+    return response["message"]["content"]
 
 # ==============================
-# SANITIZE (FIX CHUẨN)
+# SANITIZE
 # ==============================
 def sanitize(raw):
     lines = raw.split("\n")
+
     cleaned = []
 
     for line in lines:
@@ -72,68 +186,44 @@ def sanitize(raw):
         if not line:
             continue
 
-        # ❌ bỏ dòng flowchart lặp
+        # remove markdown
+        if "```" in line:
+            continue
+
+        # remove duplicate flowchart
         if line.lower().startswith("flowchart"):
             continue
 
-        # ❌ bỏ code
-        if re.search(r'\b(if|else|function|return|class|public|private)\b', line):
+        # remove php/js code
+        if re.search(r'\b(function|class|public|private|return|if|else)\b', line):
             continue
 
-        # ❌ bỏ ký tự nguy hiểm
-        if ";" in line or "$" in line:
-            continue
+        # remove dangerous chars
+        line = line.replace(";", "")
+        line = line.replace("$", "")
 
-        # fix node rỗng
+        # fix empty node
         line = re.sub(r'(\b\w+)\[\s*\]', r'\1["End"]', line)
 
-        # fix arrow
+        # fix broken arrow
         line = re.sub(r'-->\s*>', '-->', line)
 
-        # normalize label
+        # normalize labels
         line = re.sub(r'\[([^\"]+?)\]', r'["\1"]', line)
         line = re.sub(r'\{([^"]+?)\}', r'{"\1"}', line)
 
-        # ❌ bỏ rác
-        if any(x in line.lower() for x in ["exam", "sample", "question"]):
-            continue
-
-        # giữ cả node và edge
+        # keep only mermaid-like
         if any(x in line for x in ['-->', '[', '{', '(']):
             cleaned.append(line)
 
     if len(cleaned) < 3:
         return None
 
-    # ==============================
-    # BUILD FINAL
-    # ==============================
     final = ["flowchart TD"]
-
-    # đảm bảo start
-    final.append('Start(["Start"]) --> Choice{"Login or Register?"}')
 
     final.extend(cleaned)
 
-    # đảm bảo end
-    final.append('Home["Homepage"] --> End(["End"])')
-
     return "\n".join(final)
-
-# ==============================
-# EXPORT
-# ==============================
-def export(code, name):
-    mmd = f"{name}.mmd"
-    svg = f"{name}.svg"
-
-    with open(mmd, "w", encoding="utf-8") as f:
-        f.write(code)
-
-    subprocess.run(["mmdc", "-i", mmd, "-o", svg], check=True)
-
-    if not os.path.exists(svg) or os.path.getsize(svg) < 500:
-        raise Exception("SVG lỗi")
 
 # ==============================
 # FALLBACK
@@ -143,37 +233,69 @@ def fallback():
 
 Start(["Start"]) --> Choice{"Login or Register?"}
 
-Choice -->|Login| LoginInput[/Enter email & password/]
-Choice -->|Register| RegisterInput[/Enter info/]
+Choice -->|Login| LoginInput[/Enter credentials/]
+Choice -->|Register| RegisterInput[/Enter information/]
 
 LoginInput --> LoginCheck{"Valid?"}
-LoginCheck -->|No| Error["Error"]
+LoginCheck -->|No| Error["Show error"]
 LoginCheck -->|Yes| Auth{"Correct?"}
+
 Auth -->|No| Error
-Auth -->|Yes| LoginSuccess["Login success"]
+Auth -->|Yes| Session["Create session"]
 
 RegisterInput --> RegisterCheck{"Valid?"}
 RegisterCheck -->|No| Error
 RegisterCheck -->|Yes| Save["Create user"]
-Save --> RegisterSuccess["Register success"]
 
-LoginSuccess --> Home["Homepage"]
-RegisterSuccess --> Home
+Save --> Login["Redirect to login"]
 
-Home --> End(["End"])
+Session --> Home["Homepage"]
+Login --> Home
+
+Home --> Logout{"Logout?"}
+Logout -->|Yes| End(["End"])
+Logout -->|No| Home
 """
+
+# ==============================
+# EXPORT
+# ==============================
+def export(code):
+    mmd_file = "project_flow.mmd"
+    svg_file = "project_flow.svg"
+    png_file = "project_flow.png"
+
+    with open(mmd_file, "w", encoding="utf-8") as f:
+        f.write(code)
+
+    subprocess.run(
+        ["mmdc", "-i", mmd_file, "-o", svg_file],
+        check=True
+    )
+
+    subprocess.run(
+        ["mmdc", "-i", mmd_file, "-o", png_file],
+        check=True
+    )
 
 # ==============================
 # MAIN
 # ==============================
 def main():
-    print("🚀 Generating...")
+    print("🔍 Scanning project...")
 
-    ctx = build_context()
+    files = find_source_files(PROJECT_PATH)
+
+    print(f"📄 Found {len(files)} source files")
+
+    context = build_context(files)
+
+    print("🤖 Asking AI...")
 
     for i in range(3):
         try:
-            raw = call_ai(build_prompt(ctx))
+            raw = call_ai(build_prompt(context))
+
             clean = sanitize(raw)
 
             if not clean:
@@ -182,15 +304,22 @@ def main():
             print(f"\n--- Attempt {i+1} ---")
             print(clean)
 
-            export(clean, "auth_flow")
-            print("✅ SUCCESS")
+            export(clean)
+
+            print("\n✅ SUCCESS")
+            print("🎉 Generated:")
+            print("project_flow.svg")
+            print("project_flow.png")
+
             return
 
         except Exception as e:
-            print("❌ attempt failed:", e)
+            print(f"❌ Attempt {i+1} failed:", e)
 
-    print("⚠️ fallback")
-    export(fallback(), "auth_flow")
+    print("⚠️ Using fallback")
+
+    export(fallback())
+
     print("✅ fallback OK")
 
 # ==============================
