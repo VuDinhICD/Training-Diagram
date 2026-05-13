@@ -11,29 +11,31 @@ def select_folder():
 
 def run_script():
     project_path = entry_path.get()
+    user_req = entry_req.get() # Lấy thông tin chức năng từ ô nhập liệu
     
     if not project_path or not os.path.exists(project_path):
         messagebox.showerror("Lỗi", "Vui lòng chọn thư mục dự án!")
         return
+    
+    if not user_req.strip():
+        messagebox.showerror("Lỗi", "Vui lòng nhập chức năng cần vẽ!")
+        return
 
-    # Hiển thị trạng thái đang xử lý
-    lbl_status.config(text="🚀 Đang xử lý... Vui lòng đợi AI", fg="blue")
+    lbl_status.config(text="🚀 AI đang phân tích chức năng...", fg="blue")
     root.update()
 
     try:
-        # Gọi file gốc của bạn y hệt như cách bạn gõ lệnh Terminal
-        # python3 analyze.py /path/to/project
+        # Truyền thêm tham số user_req vào sau project_path
         result = subprocess.run(
-            ["python3", "analyze.py", project_path],
+            ["python3", "analyze.py", project_path, user_req],
             capture_output=True,
             text=True
         )
 
         if result.returncode == 0:
-            messagebox.showinfo("Thành công", "Đã xuất file PNG thành công từ analyze.py!")
-            print(result.stdout) # In log ra terminal để theo dõi
+            messagebox.showinfo("Thành công", f"Đã vẽ xong sơ đồ cho: {user_req}")
         else:
-            messagebox.showerror("Lỗi khi chạy script", result.stderr)
+            messagebox.showerror("Lỗi", result.stderr)
             
     except Exception as e:
         messagebox.showerror("Lỗi hệ thống", str(e))
@@ -42,23 +44,27 @@ def run_script():
 
 # --- GIAO DIỆN ---
 root = tk.Tk()
-root.title("Công cụ Vẽ Sơ đồ AI")
-root.geometry("500x250")
+root.title("AI Diagram Pro")
+root.geometry("550x350")
 
-tk.Label(root, text="CHỌN PROJECT ĐỂ VẼ SƠ ĐỒ", font=("Arial", 12, "bold")).pack(pady=20)
-
-frame = tk.Frame(root)
-frame.pack(pady=5)
-
-entry_path = tk.Entry(frame, width=40)
+# 1. Chọn Folder
+tk.Label(root, text="1. Thư mục dự án:", font=("Arial", 10, "bold")).pack(pady=(20,0), anchor="w", padx=50)
+frame1 = tk.Frame(root)
+frame1.pack(pady=5)
+entry_path = tk.Entry(frame1, width=40)
 entry_path.pack(side=tk.LEFT, padx=5)
+tk.Button(frame1, text="Browse", command=select_folder).pack(side=tk.LEFT)
 
-btn_browse = tk.Button(frame, text="Browse", command=select_folder)
-btn_browse.pack(side=tk.LEFT)
+# 2. Nhập yêu cầu
+tk.Label(root, text="2. Chức năng cần vẽ (ví dụ: flow thanh toán, upload ảnh...):", font=("Arial", 10, "bold")).pack(pady=(15,0), anchor="w", padx=50)
+entry_req = tk.Entry(root, width=56)
+entry_req.insert(0, "- authentication flow, login, register") # Gợi ý mặc định
+entry_req.pack(pady=5)
 
-btn_run = tk.Button(root, text="BẮT ĐẦU", command=run_script, 
-                   bg="#4CAF50", fg="black", font=("Arial", 10, "bold"), width=15, height=2)
-btn_run.pack(pady=20)
+# 3. Nút bấm
+btn_run = tk.Button(root, text="GENERATE DIAGRAM", command=run_script, 
+                   bg="#2ecc71", font=("Arial", 11, "bold"), width=20, height=2)
+btn_run.pack(pady=25)
 
 lbl_status = tk.Label(root, text="Sẵn sàng", fg="green")
 lbl_status.pack()
